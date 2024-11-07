@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "zmq-anyio"
+version = "0.0.0"
+description = "Asynchronous API for ZMQ using AnyIO"
+readme = "README.md"
+authors = [
+    {name = "David Brochart", email = "david.brochart@gmail.com"},
+]
+license = {file = "LICENSE"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Typing :: Typed",
+    "Topic :: System :: Networking",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+requires-python = ">= 3.9"
+dependencies = [
+    "anyio",
+    "anyioutils",
+    "pyzmq >=26.0.0,<27.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest >=8,<9",
+    "trio >=0.27.0,<0.28",
+    "mypy",
+    "coverage[toml] >=7,<8",
+]
+
+[project.urls]
+Source = "https://github.com/davidbrochart/zmq-anyio"
+Issues = "https://github.com/davidbrochart/zmq-anyio/issues"
+
+[tool.hatch.build.targets.wheel]
+ignore-vcs = true
+packages = ["src/zmq_anyio"]
+
+[tool.coverage.run]
+source = ["zmq_anyio", "tests"]
+
+[tool.coverage.report]
+show_missing = true
