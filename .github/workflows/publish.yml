@@ -13,17 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: 3.13
-
       - run: |
           pip install hatch
           hatch build
       - uses: actions/upload-artifact@v4
         with:
-          path: ./dist
+          name: dist
+          path: dist
 
   pypi-publish:
     name: Upload release to PyPI
@@ -38,19 +37,19 @@ jobs:
     - name: Upload packages
       uses: pypa/gh-action-pypi-publish@release/v1
 
-github-release:
-    name: Create GitHub release
-    needs: pypi-release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-    - uses: actions/checkout@v4
-    - id: changelog
-      uses: agronholm/release-notes@v1
-      with:
-        path: CHANGELOG.md
-        version_pattern: ^\#\# ([0-9][^*]*)\n
-    - uses: ncipollo/release-action@v1
-      with:
-        body: ${{ steps.changelog.outputs.changelog }}
+  github-release:
+      name: Create GitHub release
+      needs: pypi-publish
+      runs-on: ubuntu-latest
+      permissions:
+        contents: write
+      steps:
+      - uses: actions/checkout@v4
+      - id: changelog
+        uses: agronholm/release-notes@v1
+        with:
+          path: CHANGELOG.md
+          version_pattern: ^\#\# ([0-9][^*]*)\n
+      - uses: ncipollo/release-action@v1
+        with:
+          body: ${{ steps.changelog.outputs.changelog }}
