@@ -1,6 +1,6 @@
 import pytest
 import zmq
-from anyio import create_task_group, sleep
+from anyio import create_task_group, move_on_after, sleep, to_thread
 from zmq_anyio import Socket
 
 pytestmark = pytest.mark.anyio
@@ -81,3 +81,28 @@ async def test_inproc(sockets):
         tg.start_soon(recv)
         await sleep(0.1)
         a.send(b"hi")
+
+
+@pytest.mark.parametrize("total_threads", [1, 2])
+async def test_start_socket(total_threads, create_bound_pair):
+    to_thread.current_default_thread_limiter().total_tokens = total_threads
+
+    a, b = map(Socket, create_bound_pair(zmq.REQ, zmq.REP))
+    a_started = False
+    b_started = False
+
+    with pytest.raises(BaseException):
+        async with b:
+            b_started = True
+            with move_on_after(0.1):
+                async with a:
+                    a_started = True
+                    raise RuntimeError
+
+    assert b_started
+    if total_threads == 1:
+        assert not a_started
+    else:
+        assert a_started
+    
+    to_thread.current_default_thread_limiter().total_tokens = 40
