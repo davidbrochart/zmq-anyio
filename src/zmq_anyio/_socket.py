@@ -169,7 +169,7 @@ class Socket(zmq.Socket):
     _select_socket_r = None
     _select_socket_w = None
     _stopped = None
-    _started = None
+    started = None
 
     def __init__(
         self,
@@ -197,7 +197,7 @@ class Socket(zmq.Socket):
         self._select_socket_r, self._select_socket_w = socketpair()
         self._select_socket_r.setblocking(False)
         self._select_socket_w.setblocking(False)
-        self._started = Event()
+        self.started = Event()
         self._stopped = threading.Event()
 
     def close(self, linger: int | None = None) -> None:
@@ -694,13 +694,13 @@ class Socket(zmq.Socket):
 
     async def start(self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED) -> None:
         assert self._task_group is not None
-        assert self._started is not None
+        assert self.started is not None
         self._task_group.start_soon(partial(to_thread.run_sync, self._reader, abandon_on_cancel=True))
-        await self._started.wait()
+        await self.started.wait()
         task_status.started()
 
     def _reader(self):
-        from_thread.run_sync(self._started.set)
+        from_thread.run_sync(self.started.set)
         while True:
             try:
                 rs, ws, xs = select.select([self._shadow_sock, self._select_socket_r.fileno()], [], [self._shadow_sock, self._select_socket_r.fileno()])

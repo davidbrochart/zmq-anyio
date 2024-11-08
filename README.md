@@ -2,4 +2,4 @@
 
 # zmq-anyio
 
-Asynchronous API for ZMQ using AnyIO
+Asynchronous API for ZMQ using AnyIO.
