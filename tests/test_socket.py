@@ -50,7 +50,7 @@ async def test_arecv_json(context, create_bound_pair):
 async def test_arecv_send(context, create_bound_pair):
     a, b = create_bound_pair(zmq.REQ, zmq.REP)
     a, b = Socket(a), Socket(b)
-    async with a, b, create_task_group() as tg:
+    async with b, a, create_task_group() as tg:
 
         async def recv(messages):
             for message in messages:
@@ -100,9 +100,6 @@ async def test_start_socket(total_threads, create_bound_pair):
                     raise RuntimeError
 
     assert b_started
-    if total_threads == 1:
-        assert not a_started
-    else:
-        assert a_started
+    assert a_started
     
     to_thread.current_default_thread_limiter().total_tokens = 40

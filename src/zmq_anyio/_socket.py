@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import select
 import selectors
-import threading
 import warnings
 from collections import deque
 from contextlib import AsyncExitStack
@@ -18,13 +17,15 @@ from typing import (
     cast,
 )
 
-from anyio import Event, TASK_STATUS_IGNORED, create_task_group, from_thread, sleep, to_thread, wait_socket_readable
+from anyio import Event, TASK_STATUS_IGNORED, create_task_group, sleep, wait_socket_readable
 from anyio.abc import TaskGroup, TaskStatus
 from anyioutils import Future, Task, create_task
 
 import zmq
 from zmq import EVENTS, POLLIN, POLLOUT
 from zmq.utils import jsonapi
+
+from ._selector_thread import _set_selector_windows
 
 
 class _FutureEvent(NamedTuple):
@@ -166,9 +167,6 @@ class Socket(zmq.Socket):
     _fd = None
     _exit_stack = None
     _task_group = None
-    _select_socket_r = None
-    _select_socket_w = None
-    _stopped = None
     started = None
 
     def __init__(
@@ -194,17 +192,9 @@ class Socket(zmq.Socket):
         self._send_futures = deque()
         self._state = 0
         self._fd = self._shadow_sock.FD
-        self._select_socket_r, self._select_socket_w = socketpair()
-        self._select_socket_r.setblocking(False)
-        self._select_socket_w.setblocking(False)
         self.started = Event()
-        self._stopped = threading.Event()
 
     def close(self, linger: int | None = None) -> None:
-        assert self._stopped is not None
-        assert self._select_socket_w is not None
-        self._stopped.set()
-        self._select_socket_w.send(b"a")
         if not self.closed and self._fd is not None:
             event_list: list[_FutureEvent] = list(
                 chain(self._recv_futures or [], self._send_futures or [])
@@ -689,29 +679,32 @@ class Socket(zmq.Socket):
             self.close()
         except BaseException:
             pass
-        self._task_group.cancel_scope.cancel()
+        await self.stop()
         return await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
 
     async def start(self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED) -> None:
-        assert self._task_group is not None
-        assert self.started is not None
-        self._task_group.start_soon(partial(to_thread.run_sync, self._reader, abandon_on_cancel=True))
-        await self.started.wait()
+        if self._task_group is None:
+            async with create_task_group() as self._task_group:
+                await self._task_group.start(self._start)
+        else:
+            await self._task_group.start(self._start)
         task_status.started()
 
-    def _reader(self):
-        from_thread.run_sync(self.started.set)
-        while True:
-            try:
-                rs, ws, xs = select.select([self._shadow_sock, self._select_socket_r.fileno()], [], [self._shadow_sock, self._select_socket_r.fileno()])
-            except OSError as e:
-                return
-            if self._stopped.is_set():
-                return
-            self._read()
+    async def stop(self):
+        assert self._task_group is not None
+        self._task_group.cancel_scope.cancel()
 
-    def _read(self):
-        from_thread.run(self._handle_events)
+    async def _start(self, *, task_status: TaskStatus[None]):
+        _set_selector_windows()
+        assert self._task_group is not None
+        assert self.started is not None
+        if self.started.is_set():
+            raise RuntimeError("Socket already started")
+        self.started.set()
+        task_status.started()
+        while True:
+            await wait_socket_readable(self._shadow_sock.FD)  # type: ignore[arg-type]
+            await self._handle_events()
 
     def _clear_io_state(self):
         """unregister the ioloop event handler
