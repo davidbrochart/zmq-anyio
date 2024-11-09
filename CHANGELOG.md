@@ -1,5 +1,9 @@
 # Version history
 
+## 0.1.3
+
+- Use `anyio.wait_socket_readable(sock)` with a ThreadSelectorEventLoop on Windows with ProactorEventLoop.
+
 ## 0.1.2
 
 - Block socket startup if no thread is available.
