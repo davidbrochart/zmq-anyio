@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 import selectors
 from collections import deque
 from contextlib import AsyncExitStack
@@ -28,6 +29,11 @@ from zmq.utils import jsonapi
 
 from ._selector_thread import _set_selector_windows
 
+try:
+    DEFAULT_PROTOCOL = pickle.DEFAULT_PROTOCOL
+except AttributeError:
+    DEFAULT_PROTOCOL = pickle.HIGHEST_PROTOCOL
+
 
 class _FutureEvent(NamedTuple):
     future: Future
@@ -37,10 +43,9 @@ class _FutureEvent(NamedTuple):
     timer: Any
 
 
-class _AsyncPoller(zmq.Poller):
+class Poller(zmq.Poller):
     """Poller that returns a Future on poll, instead of blocking."""
 
-    _socket_class: type[Socket]
     raw_sockets: list[Any]
 
     def _watch_raw_socket(self, socket: Any, evt: int, f: Callable) -> None:
@@ -51,7 +56,13 @@ class _AsyncPoller(zmq.Poller):
         """Unschedule callback for a raw socket"""
         raise NotImplementedError()
 
-    async def poll(self, task_group, timeout=-1) -> list[tuple[Any, int]]:  # type: ignore
+    async def apoll(self, timeout=-1, _task_group=None) -> list[tuple[Any, int]]:  # type: ignore
+        if _task_group is None:
+            async with create_task_group() as tg:
+                return await self._apoll(timeout, tg)
+        return await self._apoll(timeout, _task_group)
+
+    async def _apoll(self, timeout, task_group) -> list[tuple[Any, int]]:  # type: ignore
         """Return a poll event"""
         future = Future()
         if timeout == 0:
@@ -77,9 +88,9 @@ class _AsyncPoller(zmq.Poller):
 
         for socket, mask in self.sockets:
             if isinstance(socket, zmq.Socket):
-                if not isinstance(socket, self._socket_class):
+                if not isinstance(socket, Socket):
                     # it's a blocking zmq.Socket, wrap it in async
-                    socket = self._socket_class(socket)
+                    socket = Socket(socket)
                 if mask & zmq.POLLIN:
                     task_group.start_soon(
                         partial(socket._add_recv_event, "poll", future=watcher)
@@ -111,7 +122,7 @@ class _AsyncPoller(zmq.Poller):
                     future.set_exception(watcher.exception())
                 else:
                     try:
-                        result = super().poll(0)
+                        result = super(Poller, self).poll(0)
                     except Exception as e:
                         future.set_exception(e)
                     else:
@@ -153,7 +164,6 @@ class Socket(zmq.Socket):
     _send_futures = None
     _state = 0
     _shadow_sock: zmq.Socket
-    _poller_class = _AsyncPoller
     _fd = None
     _exit_stack = None
     _task_group = None
@@ -226,6 +236,79 @@ class Socket(zmq.Socket):
         msg = await self.arecv(flags)
         return self._deserialize(msg, lambda buf: jsonapi.loads(buf, **kwargs))
 
+    async def arecv_string(self, flags: int = 0, encoding: str = "utf-8") -> str:
+        """Receive a unicode string, as sent by send_string.
+
+        Parameters
+        ----------
+        flags : int
+            Any valid flags for :func:`Socket.recv`.
+        encoding : str
+            The encoding to be used
+
+        Returns
+        -------
+        s : str
+            The Python unicode string that arrives as encoded bytes.
+
+        Raises
+        ------
+        ZMQError
+            for any of the reasons :func:`Socket.recv` might fail
+        """
+        msg = await self.arecv(flags=flags)
+        return self._deserialize(msg, lambda buf: buf.decode(encoding))
+
+    async def arecv_pyobj(self, flags: int = 0) -> Any:
+        """Receive a Python object as a message using pickle to serialize.
+
+        Parameters
+        ----------
+        flags : int
+            Any valid flags for :func:`Socket.recv`.
+
+        Returns
+        -------
+        obj : Python object
+            The Python object that arrives as a message.
+
+        Raises
+        ------
+        ZMQError
+            for any of the reasons :func:`~Socket.recv` might fail
+        """
+        msg = await self.arecv(flags)
+        return self._deserialize(msg, pickle.loads)
+
+    async def arecv_serialized(self, deserialize, flags=0, copy=True):
+        """Receive a message with a custom deserialization function.
+
+        .. versionadded:: 17
+
+        Parameters
+        ----------
+        deserialize : callable
+            The deserialization function to use.
+            deserialize will be called with one argument: the list of frames
+            returned by recv_multipart() and can return any object.
+        flags : int, optional
+            Any valid flags for :func:`Socket.recv`.
+        copy : bool, optional
+            Whether to recv bytes or Frame objects.
+
+        Returns
+        -------
+        obj : object
+            The object returned by the deserialization function.
+
+        Raises
+        ------
+        ZMQError
+            for any of the reasons :func:`~Socket.recv` might fail
+        """
+        frames = await self.arecv_multipart(flags=flags, copy=copy)
+        return self._deserialize(frames, deserialize)
+
     async def arecv_multipart(
         self,
         flags: int = 0,
@@ -262,6 +345,71 @@ class Socket(zmq.Socket):
                 send_kwargs[key] = kwargs.pop(key)
         msg = jsonapi.dumps(obj, **kwargs)
         return await self.asend(msg, flags=flags, **send_kwargs)
+
+    async def asend_string(
+        self,
+        u: str,
+        flags: int = 0,
+        copy: bool = True,
+        encoding: str = "utf-8",
+        **kwargs,
+    ):
+        """Send a Python unicode string as a message with an encoding.
+
+        0MQ communicates with raw bytes, so you must encode/decode
+        text (str) around 0MQ.
+
+        Parameters
+        ----------
+        u : str
+            The unicode string to send.
+        flags : int, optional
+            Any valid flags for :func:`Socket.send`.
+        encoding : str
+            The encoding to be used
+        """
+        if not isinstance(u, str):
+            raise TypeError("str objects only")
+        return await self.asend(u.encode(encoding), flags=flags, copy=copy, **kwargs)
+
+    async def asend_pyobj(
+        self, obj: Any, flags: int = 0, protocol: int = DEFAULT_PROTOCOL, **kwargs
+    ):
+        """Send a Python object as a message using pickle to serialize.
+
+        Parameters
+        ----------
+        obj : Python object
+            The Python object to send.
+        flags : int
+            Any valid flags for :func:`Socket.send`.
+        protocol : int
+            The pickle protocol number to use. The default is pickle.DEFAULT_PROTOCOL
+            where defined, and pickle.HIGHEST_PROTOCOL elsewhere.
+        """
+        msg = pickle.dumps(obj, protocol)
+        return await self.asend(msg, flags=flags, **kwargs)
+
+    async def asend_serialized(self, msg, serialize, flags=0, copy=True, **kwargs):
+        """Send a message with a custom serialization function.
+
+        .. versionadded:: 17
+
+        Parameters
+        ----------
+        msg : The message to be sent. Can be any object serializable by `serialize`.
+        serialize : callable
+            The serialization function to use.
+            serialize(msg) should return an iterable of sendable message frames
+            (e.g. bytes objects), which will be passed to send_multipart.
+        flags : int, optional
+            Any valid flags for :func:`Socket.send`.
+        copy : bool, optional
+            Whether to copy the frames.
+
+        """
+        frames = serialize(msg)
+        return await self.asend_multipart(frames, flags=flags, copy=copy, **kwargs)
 
     async def asend_multipart(
         self,
@@ -321,7 +469,7 @@ class Socket(zmq.Socket):
 
         # return await f.wait()
 
-    async def poll(self, timeout=None, flags=zmq.POLLIN) -> int:  # type: ignore
+    async def apoll(self, timeout=None, flags=zmq.POLLIN) -> int:  # type: ignore
         """poll the socket for events
 
         returns a Future for the poll results.
@@ -330,11 +478,14 @@ class Socket(zmq.Socket):
         if self.closed:
             raise zmq.ZMQError(zmq.ENOTSUP)
 
-        p = self._poller_class()
+        p = Poller()
         p.register(self, flags)
         assert self._task_group is not None
         poll_future = cast(
-            Task, create_task(p.poll(self._task_group, timeout), self._task_group)
+            Task,
+            create_task(
+                p.apoll(timeout, _task_group=self._task_group), self._task_group
+            ),
         )
 
         future = Future()
@@ -374,7 +525,7 @@ class Socket(zmq.Socket):
 
         return await future.wait()
 
-    def _add_timeout(self, task_group, future, timeout):
+    def _add_timeout(self, future, timeout):
         """Add a timeout for a send or recv Future"""
 
         def future_timeout():
@@ -385,9 +536,9 @@ class Socket(zmq.Socket):
             # raise EAGAIN
             future.set_exception(zmq.Again())
 
-        return self._call_later(task_group, timeout, future_timeout)
+        return self._call_later(timeout, future_timeout)
 
-    def _call_later(self, task_group, delay, callback):
+    def _call_later(self, delay, callback):
         """Schedule a function to be called later
 
         Override for different IOLoop implementations
@@ -400,7 +551,7 @@ class Socket(zmq.Socket):
             await sleep(delay)
             callback()
 
-        return create_task(call_later(), task_group)
+        return create_task(call_later(), self._task_group)
 
     @staticmethod
     def _remove_finished_future(future, event_list, event=None):
