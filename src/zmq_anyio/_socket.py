@@ -212,8 +212,8 @@ class Socket(zmq.Socket):
 
     def get(self, key):
         result = super().get(key)
-        # if key == EVENTS:
-        #     self._schedule_remaining_events(result)
+        if key == EVENTS:
+            self._schedule_remaining_events(result)
         return result
 
     get.__doc__ = zmq.Socket.get.__doc__
@@ -429,45 +429,6 @@ class Socket(zmq.Socket):
     def _deserialize(self, recvd, load):
         """Deserialize with Futures"""
         return load(recvd)
-        # f = Future()
-
-        # def _chain(_):
-        #    """Chain result through serialization to recvd"""
-        #    if f.done():
-        #        # chained future may be cancelled, which means nobody is going to get this result
-        #        # if it's an error, that's no big deal (probably zmq.Again),
-        #        # but if it's a successful recv, this is a dropped message!
-        #        if not recvd.cancelled() and recvd.exception() is None:
-        #            warnings.warn(
-        #                # is there a useful stacklevel?
-        #                # ideally, it would point to where `f.cancel()` was called
-        #                f"Future {f} completed while awaiting {recvd}. A message has been dropped!",
-        #                RuntimeWarning,
-        #            )
-        #        return
-        #    if recvd.exception():
-        #        f.set_exception(recvd.exception())
-        #    else:
-        #        buf = recvd.result()
-        #        try:
-        #            loaded = load(buf)
-        #        except Exception as e:
-        #            f.set_exception(e)
-        #        else:
-        #            f.set_result(loaded)
-
-        # recvd.add_done_callback(_chain)
-
-        # def _chain_cancel(_):
-        #    """Chain cancellation from f to recvd"""
-        #    if recvd.done():
-        #        return
-        #    if f.cancelled():
-        #        recvd.cancel()
-
-        # f.add_done_callback(_chain_cancel)
-
-        # return await f.wait()
 
     async def apoll(self, timeout=None, flags=zmq.POLLIN) -> int:  # type: ignore
         """poll the socket for events
@@ -839,6 +800,9 @@ class Socket(zmq.Socket):
             raise RuntimeError("Socket already started")
         self.started.set()
         task_status.started()
-        while True:
-            await wait_socket_readable(self._shadow_sock.FD)  # type: ignore[arg-type]
-            await self._handle_events()
+        try:
+            while True:
+                await wait_socket_readable(self._shadow_sock.FD)  # type: ignore[arg-type]
+                await self._handle_events()
+        except Exception:
+            pass
