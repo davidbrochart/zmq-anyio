@@ -1,5 +1,9 @@
 # Version history
 
+## 0.2.1
+
+- Update README.
+
 ## 0.2.0
 
 - Use root task group instead of creating new ones.
