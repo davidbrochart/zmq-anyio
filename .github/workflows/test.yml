@@ -25,8 +25,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: pip install -e ".[test]"
-      - name: Check types
-        run: mypy src/zmq_anyio
+      - name: Check with mypy and ruff
+        if: ${{ (matrix.python-version == '3.13') && (matrix.os == 'ubuntu-latest') }}
+        run: |
+          mypy src
+          ruff format --check src
+          ruff check src
       - name: Run tests
         if: ${{ !((matrix.python-version == '3.13') && (matrix.os == 'ubuntu-latest')) }}
         run: pytest --color=yes -v tests

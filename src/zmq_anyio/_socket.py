@@ -1,24 +1,25 @@
 from __future__ import annotations
 
-import select
 import selectors
-import warnings
 from collections import deque
 from contextlib import AsyncExitStack
 from functools import partial
 from itertools import chain
-from socket import socketpair
 from typing import (
     Any,
-    Awaitable,
     Callable,
     NamedTuple,
-    TypeVar,
     cast,
 )
 
-from anyio import Event, TASK_STATUS_IGNORED, create_task_group, sleep, wait_socket_readable
-from anyio.abc import TaskGroup, TaskStatus
+from anyio import (
+    Event,
+    TASK_STATUS_IGNORED,
+    create_task_group,
+    sleep,
+    wait_socket_readable,
+)
+from anyio.abc import TaskStatus
 from anyioutils import Future, Task, create_task
 
 import zmq
@@ -74,18 +75,11 @@ class _AsyncPoller(zmq.Poller):
 
         watcher.add_done_callback(lambda f: self._unwatch_raw_sockets(*raw_sockets))
 
-        wrapped_sockets: list[Socket] = []
-
-        def _clear_wrapper_io(f):
-            for s in wrapped_sockets:
-                s._clear_io_state()
-
         for socket, mask in self.sockets:
             if isinstance(socket, zmq.Socket):
                 if not isinstance(socket, self._socket_class):
                     # it's a blocking zmq.Socket, wrap it in async
                     socket = self._socket_class(socket)
-                    wrapped_sockets.append(socket)
                 if mask & zmq.POLLIN:
                     task_group.start_soon(
                         partial(socket._add_recv_event, "poll", future=watcher)
@@ -124,9 +118,6 @@ class _AsyncPoller(zmq.Poller):
                         future.set_result(result)
 
             watcher.add_done_callback(on_poll_ready)
-
-            if wrapped_sockets:
-                watcher.add_done_callback(_clear_wrapper_io)
 
             if timeout is not None and timeout > 0:
                 # schedule cancel to fire on poll timeout, if any
@@ -205,7 +196,6 @@ class Socket(zmq.Socket):
                     except RuntimeError:
                         # RuntimeError may be called during teardown
                         pass
-            self._clear_io_state()
         super().close(linger=linger)
 
     close.__doc__ = zmq.Socket.close.__doc__
@@ -224,7 +214,9 @@ class Socket(zmq.Socket):
         copy: bool = True,
         track: bool = False,
     ) -> bytes | zmq.Frame:
-        return await self._add_recv_event("recv", dict(flags=flags, copy=copy, track=track))
+        return await self._add_recv_event(
+            "recv", dict(flags=flags, copy=copy, track=track)
+        )
 
     async def arecv_json(
         self,
@@ -240,7 +232,9 @@ class Socket(zmq.Socket):
         copy: bool = True,
         track: bool = False,
     ) -> list[bytes] | list[zmq.Frame]:
-        return await self._add_recv_event("recv_multipart", dict(flags=flags, copy=copy, track=track))
+        return await self._add_recv_event(
+            "recv_multipart", dict(flags=flags, copy=copy, track=track)
+        )
 
     async def asend(
         self,
@@ -280,7 +274,9 @@ class Socket(zmq.Socket):
         kwargs["flags"] = flags
         kwargs["copy"] = copy
         kwargs["track"] = track
-        return await self._add_send_event("send_multipart", msg=msg_parts, kwargs=kwargs)
+        return await self._add_send_event(
+            "send_multipart", msg=msg_parts, kwargs=kwargs
+        )
 
     def _deserialize(self, recvd, load):
         """Deserialize with Futures"""
@@ -337,7 +333,9 @@ class Socket(zmq.Socket):
         p = self._poller_class()
         p.register(self, flags)
         assert self._task_group is not None
-        poll_future = cast(Task, create_task(p.poll(self._task_group, timeout), self._task_group))
+        poll_future = cast(
+            Task, create_task(p.poll(self._task_group, timeout), self._task_group)
+        )
 
         future = Future()
 
@@ -464,9 +462,7 @@ class Socket(zmq.Socket):
             self._add_io_state(POLLIN)
         return await f.wait()
 
-    async def _add_send_event(
-        self, kind, msg=None, kwargs=None, future=None
-    ):
+    async def _add_send_event(self, kind, msg=None, kwargs=None, future=None):
         """Add a send event, returning the corresponding Future"""
         f = future or Future()
         # attempt send with DONTWAIT if no futures are waiting
@@ -670,7 +666,9 @@ class Socket(zmq.Socket):
         await self.stop()
         return await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
 
-    async def start(self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED) -> None:
+    async def start(
+        self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED
+    ) -> None:
         if self._task_group is None:
             async with create_task_group() as self._task_group:
                 await self._task_group.start(self._start)
@@ -693,14 +691,3 @@ class Socket(zmq.Socket):
         while True:
             await wait_socket_readable(self._shadow_sock.FD)  # type: ignore[arg-type]
             await self._handle_events()
-
-    def _clear_io_state(self):
-        """unregister the ioloop event handler
-
-        called once during close
-        """
-        fd = self._shadow_sock
-        if self._shadow_sock.closed:
-            fd = self._fd
-        #if self._current_loop is not None:
-        #    self._current_loop.remove_handler(fd)
