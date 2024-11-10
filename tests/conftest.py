@@ -104,3 +104,13 @@ def create_bound_pair(socket):
         return s1, s2
 
     return create_bound_pair
+
+
+@pytest.fixture
+def push_pull(create_bound_pair):
+    return create_bound_pair(zmq.PUSH, zmq.PULL)
+
+
+@pytest.fixture
+def dealer_router(create_bound_pair):
+    return create_bound_pair(zmq.DEALER, zmq.ROUTER)
