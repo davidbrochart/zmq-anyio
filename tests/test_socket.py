@@ -40,7 +40,7 @@ async def test_arecv(context, create_bound_pair):
 async def test_arecv_json(context, create_bound_pair):
     a, b = create_bound_pair(zmq.PUSH, zmq.PULL)
     a, b = Socket(a), Socket(b)
-    async with b, a, create_task_group() as tg:
+    async with a, b, create_task_group() as tg:
 
         async def recv(messages):
             for message in messages:
