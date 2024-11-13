@@ -9,7 +9,18 @@ from zmq_anyio import Poller, Socket
 pytestmark = pytest.mark.anyio
 
 
-async def test_arecv_multipart(context, create_bound_pair):
+async def test_context(context):
+    a, b = Socket(context, zmq.PAIR), Socket(context, zmq.PAIR)
+    port = a.bind_to_random_port("tcp://127.0.0.1")
+    b.connect(f'tcp://127.0.0.1:{port}')
+    a.send(b"Hello")
+    assert b.recv() == b"Hello"
+    async with a, b:
+        await a.asend(b"Hello")
+        assert await b.arecv() == b"Hello"
+
+
+async def test_arecv_multipart(create_bound_pair):
     a, b = create_bound_pair(zmq.PUSH, zmq.PULL)
     a, b = Socket(a), Socket(b)
     async with b, a, create_task_group() as tg:
@@ -23,7 +34,7 @@ async def test_arecv_multipart(context, create_bound_pair):
         await a.asend(b", World!")
 
 
-async def test_arecv(context, create_bound_pair):
+async def test_arecv(create_bound_pair):
     a, b = create_bound_pair(zmq.PUSH, zmq.PULL)
     a, b = Socket(a), Socket(b)
     async with b, a, create_task_group() as tg:
@@ -37,7 +48,7 @@ async def test_arecv(context, create_bound_pair):
         await a.asend(b", World!")
 
 
-async def test_arecv_json(context, create_bound_pair):
+async def test_arecv_json(create_bound_pair):
     a, b = create_bound_pair(zmq.PUSH, zmq.PULL)
     a, b = Socket(a), Socket(b)
     async with a, b, create_task_group() as tg:
@@ -50,7 +61,7 @@ async def test_arecv_json(context, create_bound_pair):
         await a.asend_json({"Hello": ", World!"})
 
 
-async def test_arecv_send(context, create_bound_pair):
+async def test_arecv_send(create_bound_pair):
     a, b = create_bound_pair(zmq.REQ, zmq.REP)
     a, b = Socket(a), Socket(b)
     async with b, a, create_task_group() as tg:

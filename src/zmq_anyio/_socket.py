@@ -319,6 +319,18 @@ class Socket(zmq.Socket):
             "recv_multipart", dict(flags=flags, copy=copy, track=track)
         )
 
+    def send(self, *args, **kwargs):
+        if self._task_group is None:
+            super().send(*args, **kwargs)
+        else:
+            self._task_group.start_soon(partial(self.asend, *args, **kwargs))
+
+    def send_multipart(self, *args, **kwargs):
+        if self._task_group is None:
+            super().send_multipart(*args, **kwargs)
+        else:
+            self._task_group.start_soon(partial(self.asend_multipart, *args, **kwargs))
+
     async def asend(
         self,
         data: bytes,
@@ -789,7 +801,9 @@ class Socket(zmq.Socket):
         task_status.started()
 
     async def stop(self):
-        assert self._task_group is not None
+        if self._task_group is None:
+            return
+
         self._task_group.cancel_scope.cancel()
 
     async def _start(self, *, task_status: TaskStatus[None]):
@@ -797,7 +811,9 @@ class Socket(zmq.Socket):
         assert self._task_group is not None
         assert self.started is not None
         if self.started.is_set():
-            raise RuntimeError("Socket already started")
+            task_status.started()
+            return
+
         self.started.set()
         task_status.started()
         try:

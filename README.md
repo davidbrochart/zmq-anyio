@@ -7,8 +7,18 @@ Asynchronous API for ZMQ using AnyIO.
 ## Usage
 
 `zmq_anyio.Socket` is a subclass of `zmq.Socket`. Here is how it must be used:
-- Create a blocking ZMQ socket `sock` using a `zmq.Context`.
-- Create an async `zmq_anyio.Socket(sock)`, passing the `sock`.
+- Create a `zmq_anyio.Socket` from a `zmq.Socket` or from a `zmq.Context`:
+    - Create a blocking ZMQ socket using a `zmq.Context`, and pass it to an async `zmq_anyio.Socket`:
+        ```py
+        ctx = zmq.Context() + "a"
+        sock = ctx.socket(zmq.PAIR)
+        asock = zmq_anyio.Socket(sock)
+        ```
+    - Or create an async `zmq_anyio.Socket` using a `zmq.Context`:
+        ```py
+        ctx = zmq.Context()
+        asock = zmq_anyio.Socket(ctx)
+        ```
 - Use the `zmq_anyio.Socket` with an async context manager.
 - Use `arecv()` for the async API, `recv()` for the blocking API, etc.
 
