@@ -1,5 +1,9 @@
 # Version history
 
+## 0.2.2
+
+- Allow starting a socket multiple times.
+
 ## 0.2.1
 
 - Update README.
