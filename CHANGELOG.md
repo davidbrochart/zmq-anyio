@@ -1,5 +1,9 @@
 # Version history
 
+## 0.2.3
+
+- Check if socket is started when calling async methods.
+
 ## 0.2.2
 
 - Allow starting a socket multiple times.
