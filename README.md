@@ -10,7 +10,7 @@ Asynchronous API for ZMQ using AnyIO.
 - Create a `zmq_anyio.Socket` from a `zmq.Socket` or from a `zmq.Context`:
     - Create a blocking ZMQ socket using a `zmq.Context`, and pass it to an async `zmq_anyio.Socket`:
         ```py
-        ctx = zmq.Context() + "a"
+        ctx = zmq.Context()
         sock = ctx.socket(zmq.PAIR)
         asock = zmq_anyio.Socket(sock)
         ```
