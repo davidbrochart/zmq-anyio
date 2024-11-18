@@ -18,7 +18,7 @@ from anyio import (
     TASK_STATUS_IGNORED,
     create_task_group,
     sleep,
-    wait_socket_readable,
+    wait_readable,
 )
 from anyio.abc import TaskStatus
 from anyioutils import Future, Task, create_task
@@ -26,8 +26,6 @@ from anyioutils import Future, Task, create_task
 import zmq
 from zmq import EVENTS, POLLIN, POLLOUT
 from zmq.utils import jsonapi
-
-from ._selector_thread import _set_selector_windows
 
 try:
     DEFAULT_PROTOCOL = pickle.DEFAULT_PROTOCOL
@@ -811,7 +809,6 @@ class Socket(zmq.Socket):
         self.close()
 
     async def _start(self, *, task_status: TaskStatus[None]):
-        _set_selector_windows()
         assert self._task_group is not None
         assert self.started is not None
         task_status.started()
@@ -821,7 +818,7 @@ class Socket(zmq.Socket):
         self.started.set()
         try:
             while True:
-                await wait_socket_readable(self._shadow_sock.FD)  # type: ignore[arg-type]
+                await wait_readable(self._shadow_sock.FD)
                 await self._handle_events()
         except Exception:
             pass
