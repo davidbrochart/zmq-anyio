@@ -1,5 +1,9 @@
 # Version history
 
+## 0.2.4
+
+- Use `wait_readable()` from AnyIO v4.7.0.
+
 ## 0.2.3
 
 - Check if socket is started when calling async methods.
