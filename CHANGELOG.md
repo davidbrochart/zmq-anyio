@@ -1,5 +1,9 @@
 # Version history
 
+## 0.2.5
+
+- Bump `anyio>=4.8.0` and `anyioutils>=0.5.0`.
+
 ## 0.2.4
 
 - Use `wait_readable()` from AnyIO v4.7.0.
