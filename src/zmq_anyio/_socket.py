@@ -111,7 +111,7 @@ class Poller(zmq.Poller):
                     return
                 if watcher.cancelled():
                     try:
-                        future.cancel(raise_exception=False)
+                        future.cancel()
                     except RuntimeError:
                         # RuntimeError may be called during teardown
                         pass
@@ -138,13 +138,13 @@ class Poller(zmq.Poller):
                 timeout_handle = create_task(trigger_timeout(), task_group)
 
                 def cancel_timeout(f):
-                    timeout_handle.cancel(raise_exception=False)
+                    timeout_handle.cancel()
 
                 future.add_done_callback(cancel_timeout)
 
             def cancel_watcher(f):
                 if not watcher.done():
-                    watcher.cancel(raise_exception=False)
+                    watcher.cancel()
 
             future.add_done_callback(cancel_watcher)
 
@@ -153,7 +153,7 @@ class Poller(zmq.Poller):
 
 class _NoTimer:
     @staticmethod
-    def cancel(raise_exception=True):
+    def cancel():
         pass
 
 
@@ -201,7 +201,7 @@ class Socket(zmq.Socket):
                 for event in event_list:
                     if not event.future.done():
                         try:
-                            event.future.cancel(raise_exception=False)
+                            event.future.cancel()
                         except RuntimeError:
                             # RuntimeError may be called during teardown
                             pass
@@ -673,7 +673,7 @@ class Socket(zmq.Socket):
         if f is None:
             return
 
-        timer.cancel(raise_exception=False)
+        timer.cancel()
 
         if kind == "poll":
             # on poll event, just signal ready, nothing else.
@@ -792,7 +792,10 @@ class Socket(zmq.Socket):
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
         await self.stop()
-        return await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
+        try:
+            return await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
+        except Exception:
+            pass
 
     async def start(
         self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED
