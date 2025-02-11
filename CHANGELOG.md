@@ -1,5 +1,9 @@
 # Version history
 
+## 0.3.0
+
+- Replace async methods with methods returning `anyioutils.Future`.
+
 ## 0.2.5
 
 - Bump `anyio>=4.8.0` and `anyioutils>=0.5.0`.
