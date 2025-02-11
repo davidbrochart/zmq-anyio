@@ -76,7 +76,7 @@ class Poller(zmq.Poller):
             if not watcher.done():
                 watcher.set_result(None)
 
-        #watcher.add_done_callback(lambda f: self._unwatch_raw_sockets(*raw_sockets))
+        # watcher.add_done_callback(lambda f: self._unwatch_raw_sockets(*raw_sockets))
 
         for socket, mask in self.sockets:
             if isinstance(socket, zmq.Socket):
@@ -219,9 +219,7 @@ class Socket(zmq.Socket):
         track: bool = False,
     ) -> Future[bytes | zmq.Frame]:
         self._check_started()
-        return self._add_recv_event(
-            "recv", dict(flags=flags, copy=copy, track=track)
-        )
+        return self._add_recv_event("recv", dict(flags=flags, copy=copy, track=track))
 
     def arecv_json(
         self,
@@ -235,7 +233,9 @@ class Socket(zmq.Socket):
                 return
 
             msg = _future.result()
-            future.set_result(self._deserialize(msg, lambda buf: jsonapi.loads(buf, **kwargs)))
+            future.set_result(
+                self._deserialize(msg, lambda buf: jsonapi.loads(buf, **kwargs))
+            )
 
         _future = self.arecv(flags)
         _future.add_done_callback(callback)
@@ -501,9 +501,7 @@ class Socket(zmq.Socket):
         kwargs["flags"] = flags
         kwargs["copy"] = copy
         kwargs["track"] = track
-        return self._add_send_event(
-            "send_multipart", msg=msg_parts, kwargs=kwargs
-        )
+        return self._add_send_event("send_multipart", msg=msg_parts, kwargs=kwargs)
 
     def _deserialize(self, recvd, load):
         """Deserialize with Futures"""
