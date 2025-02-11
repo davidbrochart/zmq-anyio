@@ -10,7 +10,6 @@ from typing import (
     Any,
     Callable,
     NamedTuple,
-    cast,
 )
 
 from anyio import (
@@ -21,7 +20,7 @@ from anyio import (
     wait_readable,
 )
 from anyio.abc import TaskStatus
-from anyioutils import Future, Task, create_task
+from anyioutils import Future, create_task
 
 import zmq
 from zmq import EVENTS, POLLIN, POLLOUT
