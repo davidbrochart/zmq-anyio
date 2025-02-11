@@ -54,14 +54,8 @@ class Poller(zmq.Poller):
         """Unschedule callback for a raw socket"""
         raise NotImplementedError()
 
-    async def apoll(self, timeout=-1, _task_group=None) -> list[tuple[Any, int]]:  # type: ignore
-        if _task_group is None:
-            async with create_task_group() as tg:
-                return await self._apoll(timeout, tg)
-        return await self._apoll(timeout, _task_group)
-
-    async def _apoll(self, timeout, task_group) -> list[tuple[Any, int]]:  # type: ignore
-        """Return a poll event"""
+    def apoll(self, task_group, timeout=-1) -> list[tuple[Any, int]]:  # type: ignore
+        """Return a Future for a poll event"""
         future = Future()
         if timeout == 0:
             try:
@@ -70,7 +64,7 @@ class Poller(zmq.Poller):
                 future.set_exception(e)
             else:
                 future.set_result(result)
-            return await future.wait()
+            return future
 
         # register Future to be called as soon as any event is available on any socket
         watcher = Future()
@@ -82,21 +76,16 @@ class Poller(zmq.Poller):
             if not watcher.done():
                 watcher.set_result(None)
 
-        watcher.add_done_callback(lambda f: self._unwatch_raw_sockets(*raw_sockets))
+        #watcher.add_done_callback(lambda f: self._unwatch_raw_sockets(*raw_sockets))
 
         for socket, mask in self.sockets:
             if isinstance(socket, zmq.Socket):
                 if not isinstance(socket, Socket):
-                    # it's a blocking zmq.Socket, wrap it in async
-                    socket = Socket(socket)
+                    raise RuntimeError(f"Not an async socket: {socket}")
                 if mask & zmq.POLLIN:
-                    task_group.start_soon(
-                        partial(socket._add_recv_event, "poll", future=watcher)
-                    )
+                    socket._add_recv_event("poll", future=watcher)
                 if mask & zmq.POLLOUT:
-                    task_group.start_soon(
-                        partial(socket._add_send_event, "poll", future=watcher)
-                    )
+                    socket._add_send_event("poll", future=watcher)
             else:
                 raw_sockets.append(socket)
                 evt = 0
@@ -135,12 +124,13 @@ class Poller(zmq.Poller):
                     if not watcher.done():
                         watcher.set_result(None)
 
-                timeout_handle = create_task(trigger_timeout(), task_group)
+                if not future.done():
+                    timeout_handle = create_task(trigger_timeout(), task_group)
 
-                def cancel_timeout(f):
-                    timeout_handle.cancel()
+                    def cancel_timeout(f):
+                        timeout_handle.cancel()
 
-                future.add_done_callback(cancel_timeout)
+                    future.add_done_callback(cancel_timeout)
 
             def cancel_watcher(f):
                 if not watcher.done():
@@ -148,7 +138,7 @@ class Poller(zmq.Poller):
 
             future.add_done_callback(cancel_watcher)
 
-            return await future.wait()
+            return future
 
 
 class _NoTimer:
@@ -222,26 +212,43 @@ class Socket(zmq.Socket):
 
     get.__doc__ = zmq.Socket.get.__doc__
 
-    async def arecv(
+    def arecv(
         self,
         flags: int = 0,
         copy: bool = True,
         track: bool = False,
-    ) -> bytes | zmq.Frame:
+    ) -> Future[bytes | zmq.Frame]:
         self._check_started()
-        return await self._add_recv_event(
+        return self._add_recv_event(
             "recv", dict(flags=flags, copy=copy, track=track)
         )
 
-    async def arecv_json(
+    def arecv_json(
         self,
         flags: int = 0,
         **kwargs,
     ):
-        msg = await self.arecv(flags)
-        return self._deserialize(msg, lambda buf: jsonapi.loads(buf, **kwargs))
+        future = Future()
 
-    async def arecv_string(self, flags: int = 0, encoding: str = "utf-8") -> str:
+        def callback(_future: Future) -> None:
+            if _future.cancelled():
+                return
+
+            msg = _future.result()
+            future.set_result(self._deserialize(msg, lambda buf: jsonapi.loads(buf, **kwargs)))
+
+        _future = self.arecv(flags)
+        _future.add_done_callback(callback)
+
+        def _callback(future: Future) -> None:
+            if future.cancelled():
+                _future.cancel()
+
+        future.add_done_callback(_callback)
+
+        return future
+
+    def arecv_string(self, flags: int = 0, encoding: str = "utf-8") -> Future[str]:
         """Receive a unicode string, as sent by send_string.
 
         Parameters
@@ -261,10 +268,27 @@ class Socket(zmq.Socket):
         ZMQError
             for any of the reasons :func:`Socket.recv` might fail
         """
-        msg = await self.arecv(flags=flags)
-        return self._deserialize(msg, lambda buf: buf.decode(encoding))
+        future = Future()
 
-    async def arecv_pyobj(self, flags: int = 0) -> Any:
+        def callback(_future: Future) -> None:
+            if _future.cancelled():
+                return
+
+            msg = _future.result()
+            future.set_result(self._deserialize(msg, lambda buf: buf.decode(encoding)))
+
+        _future = self.arecv(flags)
+        _future.add_done_callback(callback)
+
+        def _callback(future: Future) -> None:
+            if future.cancelled():
+                _future.cancel()
+
+        future.add_done_callback(_callback)
+
+        return future
+
+    def arecv_pyobj(self, flags: int = 0) -> Future[Any]:
         """Receive a Python object as a message using pickle to serialize.
 
         Parameters
@@ -282,10 +306,27 @@ class Socket(zmq.Socket):
         ZMQError
             for any of the reasons :func:`~Socket.recv` might fail
         """
-        msg = await self.arecv(flags)
-        return self._deserialize(msg, pickle.loads)
+        future = Future()
 
-    async def arecv_serialized(self, deserialize, flags=0, copy=True):
+        def callback(_future: Future) -> None:
+            if _future.cancelled():
+                return
+
+            msg = _future.result()
+            future.set_result(self._deserialize(msg, pickle.loads))
+
+        _future = self.arecv(flags)
+        _future.add_done_callback(callback)
+
+        def _callback(future: Future) -> None:
+            if future.cancelled():
+                _future.cancel()
+
+        future.add_done_callback(_callback)
+
+        return future
+
+    def arecv_serialized(self, deserialize, flags=0, copy=True):
         """Receive a message with a custom deserialization function.
 
         .. versionadded:: 17
@@ -311,17 +352,35 @@ class Socket(zmq.Socket):
         ZMQError
             for any of the reasons :func:`~Socket.recv` might fail
         """
-        frames = await self.arecv_multipart(flags=flags, copy=copy)
-        return self._deserialize(frames, deserialize)
+        future = Future()
 
-    async def arecv_multipart(
+        def callback(_future: Future) -> None:
+            if _future.cancelled():
+                return
+
+            frames = _future.result()
+            res = self._deserialize(frames, deserialize)
+            future.set_result(res)
+
+        _future = self.arecv_multipart(flags=flags, copy=copy)
+        _future.add_done_callback(callback)
+
+        def _callback(future: Future) -> None:
+            if future.cancelled():
+                _future.cancel()
+
+        future.add_done_callback(_callback)
+
+        return future
+
+    def arecv_multipart(
         self,
         flags: int = 0,
         copy: bool = True,
         track: bool = False,
-    ) -> list[bytes] | list[zmq.Frame]:
+    ) -> Future[list[bytes] | list[zmq.Frame]]:
         self._check_started()
-        return await self._add_recv_event(
+        return self._add_recv_event(
             "recv_multipart", dict(flags=flags, copy=copy, track=track)
         )
 
@@ -329,50 +388,50 @@ class Socket(zmq.Socket):
         if self._task_group is None:
             super().send(*args, **kwargs)
         else:
-            self._task_group.start_soon(partial(self.asend, *args, **kwargs))
+            self._task_group.start_soon(self.asend(*args, **kwargs).wait)
 
     def send_multipart(self, *args, **kwargs):
         if self._task_group is None:
             super().send_multipart(*args, **kwargs)
         else:
-            self._task_group.start_soon(partial(self.asend_multipart, *args, **kwargs))
+            self._task_group.start_soon(self.asend_multipart(*args, **kwargs).wait)
 
-    async def asend(
+    def asend(
         self,
         data: bytes,
         flags: int = 0,
         copy: bool = True,
         track: bool = False,
         **kwargs: Any,
-    ) -> zmq.MessageTracker | None:
+    ) -> Future[zmq.MessageTracker | None]:
         self._check_started()
         kwargs["flags"] = flags
         kwargs["copy"] = copy
         kwargs["track"] = track
         kwargs.update(dict(flags=flags, copy=copy, track=track))
-        return await self._add_send_event("send", msg=data, kwargs=kwargs)
+        return self._add_send_event("send", msg=data, kwargs=kwargs)
 
-    async def asend_json(
+    def asend_json(
         self,
         obj: Any,
         flags: int = 0,
         **kwargs,
-    ):
+    ) -> Future:
         send_kwargs = {}
         for key in ("routing_id", "group"):
             if key in kwargs:
                 send_kwargs[key] = kwargs.pop(key)
         msg = jsonapi.dumps(obj, **kwargs)
-        return await self.asend(msg, flags=flags, **send_kwargs)
+        return self.asend(msg, flags=flags, **send_kwargs)
 
-    async def asend_string(
+    def asend_string(
         self,
         u: str,
         flags: int = 0,
         copy: bool = True,
         encoding: str = "utf-8",
         **kwargs,
-    ):
+    ) -> Future:
         """Send a Python unicode string as a message with an encoding.
 
         0MQ communicates with raw bytes, so you must encode/decode
@@ -389,11 +448,11 @@ class Socket(zmq.Socket):
         """
         if not isinstance(u, str):
             raise TypeError("str objects only")
-        return await self.asend(u.encode(encoding), flags=flags, copy=copy, **kwargs)
+        return self.asend(u.encode(encoding), flags=flags, copy=copy, **kwargs)
 
-    async def asend_pyobj(
+    def asend_pyobj(
         self, obj: Any, flags: int = 0, protocol: int = DEFAULT_PROTOCOL, **kwargs
-    ):
+    ) -> Future:
         """Send a Python object as a message using pickle to serialize.
 
         Parameters
@@ -407,9 +466,9 @@ class Socket(zmq.Socket):
             where defined, and pickle.HIGHEST_PROTOCOL elsewhere.
         """
         msg = pickle.dumps(obj, protocol)
-        return await self.asend(msg, flags=flags, **kwargs)
+        return self.asend(msg, flags=flags, **kwargs)
 
-    async def asend_serialized(self, msg, serialize, flags=0, copy=True, **kwargs):
+    def asend_serialized(self, msg, serialize, flags=0, copy=True, **kwargs) -> Future:
         """Send a message with a custom serialization function.
 
         .. versionadded:: 17
@@ -428,21 +487,21 @@ class Socket(zmq.Socket):
 
         """
         frames = serialize(msg)
-        return await self.asend_multipart(frames, flags=flags, copy=copy, **kwargs)
+        return self.asend_multipart(frames, flags=flags, copy=copy, **kwargs)
 
-    async def asend_multipart(
+    def asend_multipart(
         self,
         msg_parts: list[bytes],
         flags: int = 0,
         copy: bool = True,
         track: bool = False,
         **kwargs,
-    ) -> zmq.MessageTracker | None:
+    ) -> Future[zmq.MessageTracker | None]:
         self._check_started()
         kwargs["flags"] = flags
         kwargs["copy"] = copy
         kwargs["track"] = track
-        return await self._add_send_event(
+        return self._add_send_event(
             "send_multipart", msg=msg_parts, kwargs=kwargs
         )
 
@@ -450,7 +509,7 @@ class Socket(zmq.Socket):
         """Deserialize with Futures"""
         return load(recvd)
 
-    async def apoll(self, timeout=None, flags=zmq.POLLIN) -> int:  # type: ignore
+    def apoll(self, timeout=None, flags=zmq.POLLIN) -> Future:
         """poll the socket for events
 
         returns a Future for the poll results.
@@ -461,13 +520,7 @@ class Socket(zmq.Socket):
 
         p = Poller()
         p.register(self, flags)
-        assert self._task_group is not None
-        poll_future = cast(
-            Task,
-            create_task(
-                p.apoll(timeout, _task_group=self._task_group), self._task_group
-            ),
-        )
+        poll_future = p.apoll(self._task_group, timeout)
 
         future = Future()
 
@@ -504,7 +557,7 @@ class Socket(zmq.Socket):
 
         future.add_done_callback(cancel_poll)
 
-        return await future.wait()
+        return future
 
     def _add_timeout(self, future, timeout):
         """Add a timeout for a send or recv Future"""
@@ -552,7 +605,7 @@ class Socket(zmq.Socket):
             # usually this will have been removed by being consumed
             return
 
-    async def _add_recv_event(self, kind, kwargs=None, future=None):
+    def _add_recv_event(self, kind, kwargs=None, future=None) -> Future:
         """Add a recv event, returning the corresponding Future"""
         f = future or Future()
         if kind.startswith("recv") and kwargs.get("flags", 0) & zmq.DONTWAIT:
@@ -564,7 +617,7 @@ class Socket(zmq.Socket):
                 f.set_exception(e)
             else:
                 f.set_result(r)
-            return await f.wait()
+            return f
 
         timer = _NoTimer
         if hasattr(zmq, "RCVTIMEO"):
@@ -592,9 +645,9 @@ class Socket(zmq.Socket):
                 )
             )
             self._add_io_state(POLLIN)
-        return await f.wait()
+        return f
 
-    async def _add_send_event(self, kind, msg=None, kwargs=None, future=None):
+    def _add_send_event(self, kind, msg=None, kwargs=None, future=None) -> Future:
         """Add a send event, returning the corresponding Future"""
         f = future or Future()
         # attempt send with DONTWAIT if no futures are waiting
@@ -629,7 +682,7 @@ class Socket(zmq.Socket):
                 # schedule wake for recv if there are any receivers waiting
                 if self._recv_futures:
                     self._schedule_remaining_events()
-                return await f.wait()
+                return f
 
         timer = _NoTimer
         if hasattr(zmq, "SNDTIMEO"):
@@ -651,9 +704,9 @@ class Socket(zmq.Socket):
         )
 
         self._add_io_state(POLLOUT)
-        return await f.wait()
+        return f
 
-    def _handle_recv(self):
+    def _handle_recv(self) -> None:
         """Handle recv events"""
         if not self._shadow_sock.get(EVENTS) & POLLIN:
             # event triggered, but state may have been changed between trigger and callback
@@ -694,7 +747,7 @@ class Socket(zmq.Socket):
         else:
             f.set_result(result)
 
-    def _handle_send(self):
+    def _handle_send(self) -> None:
         if not self._shadow_sock.get(EVENTS) & POLLOUT:
             # event triggered, but state may have been changed between trigger and callback
             return
@@ -735,7 +788,7 @@ class Socket(zmq.Socket):
             f.set_result(result)
 
     # event masking from ZMQStream
-    async def _handle_events(self):
+    async def _handle_events(self) -> None:
         """Dispatch IO events to _handle_recv, etc."""
         if self._shadow_sock.closed:
             return
@@ -747,7 +800,7 @@ class Socket(zmq.Socket):
             self._handle_send()
         self._schedule_remaining_events()
 
-    def _schedule_remaining_events(self, events=None):
+    def _schedule_remaining_events(self, events=None) -> None:
         """Schedule a call to handle_events next loop iteration
 
         If there are still events to handle.
@@ -763,19 +816,19 @@ class Socket(zmq.Socket):
         if events & self._state:
             self._task_group.start_soon(self._handle_events)
 
-    def _add_io_state(self, state):
+    def _add_io_state(self, state) -> None:
         """Add io_state to poller."""
         if self._state != state:
             state = self._state = self._state | state
         self._update_handler(self._state)
 
-    def _drop_io_state(self, state):
+    def _drop_io_state(self, state) -> None:
         """Stop poller from watching an io_state."""
         if self._state & state:
             self._state = self._state & (~state)
         self._update_handler(self._state)
 
-    def _update_handler(self, state):
+    def _update_handler(self, state) -> None:
         """Update IOLoop handler with state.
 
         zmq FD is always read-only.
