@@ -54,9 +54,9 @@ class Poller(zmq.Poller):
         """Unschedule callback for a raw socket"""
         raise NotImplementedError()
 
-    def apoll(self, task_group, timeout=-1) -> list[tuple[Any, int]]:  # type: ignore
+    def apoll(self, task_group, timeout=-1) -> Future[list[tuple[Any, int]]]:
         """Return a Future for a poll event"""
-        future = Future()
+        future = Future[list[tuple[Any, int]]]()
         if timeout == 0:
             try:
                 result = super().poll(0)
@@ -67,7 +67,7 @@ class Poller(zmq.Poller):
             return future
 
         # register Future to be called as soon as any event is available on any socket
-        watcher = Future()
+        watcher = Future[Any]()
 
         # watch raw sockets:
         raw_sockets: list[Any] = []
@@ -95,50 +95,50 @@ class Poller(zmq.Poller):
                     evt |= selectors.EVENT_WRITE
                 self._watch_raw_socket(socket, evt, wake_raw)
 
-            def on_poll_ready(f):
-                if future.done():
-                    return
-                if watcher.cancelled():
-                    try:
-                        future.cancel()
-                    except RuntimeError:
-                        # RuntimeError may be called during teardown
-                        pass
-                    return
-                if watcher.exception():
-                    future.set_exception(watcher.exception())
+        def on_poll_ready(f):
+            if future.done():
+                return
+            if watcher.cancelled():
+                try:
+                    future.cancel()
+                except RuntimeError:
+                    # RuntimeError may be called during teardown
+                    pass
+                return
+            if watcher.exception():
+                future.set_exception(watcher.exception())
+            else:
+                try:
+                    result = super(Poller, self).poll(0)
+                except Exception as e:
+                    future.set_exception(e)
                 else:
-                    try:
-                        result = super(Poller, self).poll(0)
-                    except Exception as e:
-                        future.set_exception(e)
-                    else:
-                        future.set_result(result)
+                    future.set_result(result)
 
-            watcher.add_done_callback(on_poll_ready)
+        watcher.add_done_callback(on_poll_ready)
 
-            if timeout is not None and timeout > 0:
-                # schedule cancel to fire on poll timeout, if any
-                async def trigger_timeout():
-                    await sleep(1e-3 * timeout)
-                    if not watcher.done():
-                        watcher.set_result(None)
-
-                if not future.done():
-                    timeout_handle = create_task(trigger_timeout(), task_group)
-
-                    def cancel_timeout(f):
-                        timeout_handle.cancel()
-
-                    future.add_done_callback(cancel_timeout)
-
-            def cancel_watcher(f):
+        if timeout is not None and timeout > 0:
+            # schedule cancel to fire on poll timeout, if any
+            async def trigger_timeout():
+                await sleep(1e-3 * timeout)
                 if not watcher.done():
-                    watcher.cancel()
+                    watcher.set_result(None)
 
-            future.add_done_callback(cancel_watcher)
+            if not future.done():
+                timeout_handle = create_task(trigger_timeout(), task_group)
 
-            return future
+                def cancel_timeout(f):
+                    timeout_handle.cancel()
+
+                future.add_done_callback(cancel_timeout)
+
+        def cancel_watcher(f):
+            if not watcher.done():
+                watcher.cancel()
+
+        future.add_done_callback(cancel_watcher)
+
+        return future
 
 
 class _NoTimer:
@@ -228,7 +228,7 @@ class Socket(zmq.Socket):
         flags: int = 0,
         **kwargs,
     ):
-        future = Future()
+        future = Future[Any]()
 
         def callback(_future: Future) -> None:
             if _future.cancelled():
@@ -268,7 +268,7 @@ class Socket(zmq.Socket):
         ZMQError
             for any of the reasons :func:`Socket.recv` might fail
         """
-        future = Future()
+        future = Future[Any]()
 
         def callback(_future: Future) -> None:
             if _future.cancelled():
@@ -306,7 +306,7 @@ class Socket(zmq.Socket):
         ZMQError
             for any of the reasons :func:`~Socket.recv` might fail
         """
-        future = Future()
+        future = Future[Any]()
 
         def callback(_future: Future) -> None:
             if _future.cancelled():
@@ -522,7 +522,7 @@ class Socket(zmq.Socket):
         p.register(self, flags)
         poll_future = p.apoll(self._task_group, timeout)
 
-        future = Future()
+        future = Future[Any]()
 
         def unwrap_result(f):
             if future.done():
@@ -621,13 +621,14 @@ class Socket(zmq.Socket):
 
         timer = _NoTimer
         if hasattr(zmq, "RCVTIMEO"):
-            timeout_ms = self._shadow_sock.rcvtimeo
+            timeout_ms = float(self._shadow_sock.rcvtimeo)
             if timeout_ms >= 0:
                 timer = self._add_timeout(f, timeout_ms * 1e-3)
 
         # we add it to the list of futures before we add the timeout as the
         # timeout will remove the future from recv_futures to avoid leaks
         _future_event = _FutureEvent(f, kind, kwargs, msg=None, timer=timer)
+        assert self._recv_futures is not None
         self._recv_futures.append(_future_event)
 
         if self._shadow_sock.get(EVENTS) & POLLIN:
@@ -686,13 +687,14 @@ class Socket(zmq.Socket):
 
         timer = _NoTimer
         if hasattr(zmq, "SNDTIMEO"):
-            timeout_ms = self._shadow_sock.get(zmq.SNDTIMEO)
+            timeout_ms = float(self._shadow_sock.get(zmq.SNDTIMEO))
             if timeout_ms >= 0:
                 timer = self._add_timeout(f, timeout_ms * 1e-3)
 
         # we add it to the list of futures before we add the timeout as the
         # timeout will remove the future from recv_futures to avoid leaks
         _future_event = _FutureEvent(f, kind, kwargs=kwargs, msg=msg, timer=timer)
+        assert self._send_futures is not None
         self._send_futures.append(_future_event)
         # Don't let the Future sit in _send_futures after it's done
         f.add_done_callback(
@@ -708,7 +710,7 @@ class Socket(zmq.Socket):
 
     def _handle_recv(self) -> None:
         """Handle recv events"""
-        if not self._shadow_sock.get(EVENTS) & POLLIN:
+        if not self._shadow_sock.get(EVENTS) & POLLIN:  # type: ignore[operator]
             # event triggered, but state may have been changed between trigger and callback
             return
         f = None
@@ -748,7 +750,7 @@ class Socket(zmq.Socket):
             f.set_result(result)
 
     def _handle_send(self) -> None:
-        if not self._shadow_sock.get(EVENTS) & POLLOUT:
+        if not self._shadow_sock.get(EVENTS) & POLLOUT:  # type: ignore[operator]
             # event triggered, but state may have been changed between trigger and callback
             return
         f = None
@@ -794,9 +796,9 @@ class Socket(zmq.Socket):
             return
 
         zmq_events = self._shadow_sock.get(EVENTS)
-        if zmq_events & zmq.POLLIN:
+        if zmq_events & zmq.POLLIN:  # type: ignore[operator]
             self._handle_recv()
-        if zmq_events & zmq.POLLOUT:
+        if zmq_events & zmq.POLLOUT:  # type: ignore[operator]
             self._handle_send()
         self._schedule_remaining_events()
 
@@ -814,6 +816,7 @@ class Socket(zmq.Socket):
         if events is None:
             events = self._shadow_sock.get(EVENTS)
         if events & self._state:
+            assert self._task_group is not None
             self._task_group.start_soon(self._handle_events)
 
     def _add_io_state(self, state) -> None:
