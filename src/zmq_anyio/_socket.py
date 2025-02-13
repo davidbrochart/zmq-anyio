@@ -5,7 +5,6 @@ import selectors
 from collections import deque
 from contextlib import AsyncExitStack
 from functools import partial
-from itertools import chain
 from typing import (
     Any,
     Callable,
