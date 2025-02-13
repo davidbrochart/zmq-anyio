@@ -1,5 +1,9 @@
 # Version history
 
+## 0.3.1
+
+- Try to make starup/teardown more robust.
+
 ## 0.3.0
 
 - Replace async methods with methods returning `anyioutils.Future`.
