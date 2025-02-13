@@ -823,7 +823,9 @@ class Socket(zmq.Socket):
         async with self._start_lock:
             if self._task_group is None:
                 async with AsyncExitStack() as exit_stack:
-                    self._task_group = await exit_stack.enter_async_context(create_task_group())
+                    self._task_group = await exit_stack.enter_async_context(
+                        create_task_group()
+                    )
                     self._exit_stack = exit_stack.pop_all()
                     await self._task_group.start(self._start)
 
