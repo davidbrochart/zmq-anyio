@@ -14,6 +14,7 @@ from typing import (
 
 from anyio import (
     Event,
+    Lock,
     TASK_STATUS_IGNORED,
     create_task_group,
     sleep,
@@ -155,6 +156,8 @@ class Socket(zmq.Socket):
     _exit_stack = None
     _task_group = None
     started = None
+    stopped = None
+    _start_lock = None
 
     def __init__(
         self,
@@ -180,28 +183,8 @@ class Socket(zmq.Socket):
         self._state = 0
         self._fd = self._shadow_sock.FD
         self.started = Event()
-
-    def close(self, linger: int | None = None) -> None:
-        try:
-            if not self.closed and self._fd is not None:
-                event_list: list[_FutureEvent] = list(
-                    chain(self._recv_futures or [], self._send_futures or [])
-                )
-                for event in event_list:
-                    if not event.future.done():
-                        try:
-                            event.future.cancel()
-                        except RuntimeError:
-                            # RuntimeError may be called during teardown
-                            pass
-            super().close(linger=linger)
-        except BaseException:
-            pass
-
-        if self._task_group is not None:
-            self._task_group.cancel_scope.cancel()
-
-    close.__doc__ = zmq.Socket.close.__doc__
+        self.stopped = Event()
+        self._start_lock = Lock()
 
     def get(self, key):
         result = super().get(key)
@@ -836,48 +819,68 @@ class Socket(zmq.Socket):
         self._schedule_remaining_events()
 
     async def __aenter__(self) -> Socket:
-        async with AsyncExitStack() as exit_stack:
-            self._task_group = await exit_stack.enter_async_context(create_task_group())
-            self._exit_stack = exit_stack.pop_all()
-            await self._task_group.start(self.start)
+        assert self._start_lock is not None
+        async with self._start_lock:
+            if self._task_group is None:
+                async with AsyncExitStack() as exit_stack:
+                    self._task_group = await exit_stack.enter_async_context(create_task_group())
+                    self._exit_stack = exit_stack.pop_all()
+                    await self._task_group.start(self._start)
 
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
-        await self.stop()
-        try:
-            return await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
-        except Exception:
-            pass
+        self.close()
+        res = await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
+        await self.stopped.wait()
+        return res
 
     async def start(
-        self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED
+        self,
+        *,
+        task_status: TaskStatus[None] = TASK_STATUS_IGNORED,
     ) -> None:
-        if self._task_group is None:
-            async with create_task_group() as self._task_group:
+        assert self._start_lock is not None
+        async with self._start_lock:
+            if self._task_group is None:
+                async with create_task_group() as self._task_group:
+                    await self._task_group.start(self._start)
+                    task_status.started()
+            else:
                 await self._task_group.start(self._start)
                 task_status.started()
-        else:
-            await self._task_group.start(self._start)
-            task_status.started()
-
-    async def stop(self):
-        self.close()
 
     async def _start(self, *, task_status: TaskStatus[None]):
-        assert self._task_group is not None
         assert self.started is not None
         task_status.started()
-        if self.started.is_set():
-            return
-
         self.started.set()
         try:
             while True:
                 await wait_readable(self._shadow_sock.FD)
                 await self._handle_events()
-        except Exception:
+        except BaseException:
             pass
+        self.stopped.set()
+
+    async def stop(self):
+        self.close()
+        await self.stopped.wait()
+
+    def close(self, linger: int | None = None) -> None:
+        try:
+            if not self.closed and self._fd is not None:
+                super().close(linger=linger)
+        except BaseException:
+            pass
+
+        try:
+            if self._task_group is not None:
+                self._task_group.cancel_scope.cancel()
+                self._task_group = None
+        except BaseException:
+            pass
+
+    close.__doc__ = zmq.Socket.close.__doc__
 
     def _check_started(self):
         if self._task_group is None:
