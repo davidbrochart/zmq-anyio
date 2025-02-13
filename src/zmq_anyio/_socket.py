@@ -860,6 +860,8 @@ class Socket(zmq.Socket):
                 await self._handle_events()
         except BaseException:
             pass
+
+        assert self.stopped is not None
         self.stopped.set()
 
     async def stop(self):
