@@ -863,7 +863,11 @@ class Socket(zmq.Socket):
             while True:
                 wait_stopped_task = create_task(self.stopped.wait(), self._task_group)
                 tasks = [
-                    create_task(wait_readable(self._shadow_sock.FD), self._task_group),  # type: ignore[arg-type]
+                    create_task(
+                        wait_readable(self._shadow_sock.FD),  # type: ignore[arg-type]
+                        self._task_group,
+                        exception_handler=ignore_exceptions,
+                    ),
                     wait_stopped_task,
                 ]
                 done, pending = await wait(
@@ -909,3 +913,7 @@ class Socket(zmq.Socket):
             raise RuntimeError(
                 "Socket must be used with async context manager (or `await sock.start()`)"
             )
+
+
+def ignore_exceptions(exc: BaseException) -> bool:
+    return True
