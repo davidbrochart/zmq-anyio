@@ -1,5 +1,9 @@
 # Version history
 
+## 0.3.3
+
+- Don't await tasks that are already done.
+
 ## 0.3.2
 
 - Fix teardown.
