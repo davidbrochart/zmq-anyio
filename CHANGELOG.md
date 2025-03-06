@@ -1,5 +1,9 @@
 # Version history
 
+## 0.3.4
+
+- Ignore exceptions while reading socket.
+
 ## 0.3.3
 
 - Don't await tasks that are already done.
