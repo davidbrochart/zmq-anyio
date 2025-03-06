@@ -1,5 +1,9 @@
 # Version history
 
+## 0.3.5
+
+- Ignore exceptions in all tasks.
+
 ## 0.3.4
 
 - Ignore exceptions while reading socket.
