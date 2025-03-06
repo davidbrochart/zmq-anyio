@@ -3,8 +3,8 @@ from __future__ import annotations
 import pickle
 import selectors
 from collections import deque
-from contextlib import AsyncExitStack
 from functools import partial
+from threading import get_ident
 from typing import (
     Any,
     Callable,
@@ -13,14 +13,13 @@ from typing import (
 
 from anyio import (
     Event,
-    Lock,
     TASK_STATUS_IGNORED,
     create_task_group,
     get_cancelled_exc_class,
     sleep,
     wait_readable,
 )
-from anyio.abc import TaskStatus
+from anyio.abc import TaskGroup, TaskStatus
 from anyioutils import FIRST_COMPLETED, Future, create_task, wait
 
 import zmq
@@ -157,15 +156,18 @@ class Socket(zmq.Socket):
     _fd = None
     _exit_stack = None
     _task_group = None
+    __task_group = None
+    _thread = None
     started = None
     stopped = None
-    _start_lock = None
+    _starting = None
     _exited = None
 
     def __init__(
         self,
         context_or_socket: zmq.Context | zmq.Socket,
         socket_type: int = -1,
+        task_group: TaskGroup | None = None,
         **kwargs,
     ) -> None:
         """
@@ -188,7 +190,7 @@ class Socket(zmq.Socket):
         self.started = Event()
         self._exited = Event()
         self.stopped = Event()
-        self._start_lock = Lock()
+        self._task_group = task_group
 
     def get(self, key):
         result = super().get(key)
@@ -825,44 +827,56 @@ class Socket(zmq.Socket):
         self._schedule_remaining_events()
 
     async def __aenter__(self) -> Socket:
-        assert self._start_lock is not None
-        async with self._start_lock:
-            if self._task_group is None:
-                async with AsyncExitStack() as exit_stack:
-                    self._task_group = await exit_stack.enter_async_context(
-                        create_task_group()
-                    )
-                    self._exit_stack = exit_stack.pop_all()
-                    await self._task_group.start(self._start)
+        if self._starting:
+            return
+
+        self._starting = True
+        if self._task_group is None:
+            self.__task_group = create_task_group()
+            self._task_group = await self.__task_group.__aenter__()
+            await self._task_group.start(self._start)
 
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
         await self.stop()
-        return await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
+        if self.__task_group is not None:
+            return await self.__task_group.__aexit__(exc_type, exc_value, exc_tb)
 
     async def start(
         self,
         *,
         task_status: TaskStatus[None] = TASK_STATUS_IGNORED,
     ) -> None:
-        assert self._start_lock is not None
-        async with self._start_lock:
-            if self._task_group is None:
-                async with create_task_group() as self._task_group:
-                    await self._task_group.start(self._start)
-                    task_status.started()
-            else:
+        if self._starting:
+            return
+
+        self._starting = True
+        assert self.started is not None
+        if self.started.is_set():
+            task_status.started()
+            return
+
+        if self._task_group is None:
+            async with create_task_group() as self._task_group:
                 await self._task_group.start(self._start)
                 task_status.started()
+        else:
+            await self._task_group.start(self._start)
+            task_status.started()
 
-    async def _start(self, *, task_status: TaskStatus[None]):
+    async def _start(self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
+        assert self.started is not None
+        if self.started.is_set():
+            return
+
         assert self.started is not None
         assert self.stopped is not None
         assert self._exited is not None
         assert self._task_group is not None
         task_status.started()
         self.started.set()
+        self._thread = get_ident()
         try:
             while True:
                 wait_stopped_task = create_task(
@@ -921,6 +935,12 @@ class Socket(zmq.Socket):
             raise RuntimeError(
                 "Socket must be used with async context manager (or `await sock.start()`)"
             )
+
+        self._task_group.start_soon(self._start)
+
+        assert self._thread is not None
+        if self._thread != get_ident():
+            raise RuntimeError("Socket must be used in the same thread")
 
 
 def ignore_exceptions(exc: BaseException) -> bool:
