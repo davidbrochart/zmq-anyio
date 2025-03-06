@@ -328,7 +328,7 @@ async def test_poll_on_closed_socket(push_pull):
     b = Socket(b)
     async with create_task_group() as tg:
         async with b:
-            f = create_task(b.apoll(timeout=1), tg)
+            f = b.apoll(timeout=1)
             await sleep(0.1)
 
     assert f.done()
