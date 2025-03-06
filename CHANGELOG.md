@@ -1,8 +1,12 @@
 # Version history
 
+## 0.3.2
+
+- Fix teardown.
+
 ## 0.3.1
 
-- Try to make starup/teardown more robust.
+- Try to make startup/teardown more robust.
 
 ## 0.3.0
 
