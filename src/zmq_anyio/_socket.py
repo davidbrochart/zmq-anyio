@@ -125,7 +125,9 @@ class Poller(zmq.Poller):
                     watcher.set_result(None)
 
             if not future.done():
-                timeout_handle = create_task(trigger_timeout(), task_group)
+                timeout_handle = create_task(
+                    trigger_timeout(), task_group, exception_handler=ignore_exceptions
+                )
 
                 def cancel_timeout(f):
                     timeout_handle.cancel()
@@ -567,7 +569,9 @@ class Socket(zmq.Socket):
             await sleep(delay)
             callback()
 
-        return create_task(call_later(), self._task_group)
+        return create_task(
+            call_later(), self._task_group, exception_handler=ignore_exceptions
+        )
 
     @staticmethod
     def _remove_finished_future(future, event_list, event=None):
@@ -861,7 +865,11 @@ class Socket(zmq.Socket):
         self.started.set()
         try:
             while True:
-                wait_stopped_task = create_task(self.stopped.wait(), self._task_group)
+                wait_stopped_task = create_task(
+                    self.stopped.wait(),
+                    self._task_group,
+                    exception_handler=ignore_exceptions,
+                )
                 tasks = [
                     create_task(
                         wait_readable(self._shadow_sock.FD),  # type: ignore[arg-type]
