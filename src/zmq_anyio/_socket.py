@@ -871,8 +871,6 @@ class Socket(zmq.Socket):
                 )
                 for task in pending:
                     task.cancel()
-                for task in done:
-                    await task.wait()
                 if wait_stopped_task in done:
                     break
                 await self._handle_events()
