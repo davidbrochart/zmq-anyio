@@ -1,5 +1,9 @@
 # Version history
 
+## 0.3.6
+
+- Try to start the socket if it has a task group.
+
 ## 0.3.5
 
 - Ignore exceptions in all tasks.
