@@ -16,11 +16,12 @@ from anyio import (
     Lock,
     TASK_STATUS_IGNORED,
     create_task_group,
+    get_cancelled_exc_class,
     sleep,
     wait_readable,
 )
 from anyio.abc import TaskStatus
-from anyioutils import Future, create_task
+from anyioutils import FIRST_COMPLETED, Future, create_task, wait
 
 import zmq
 from zmq import EVENTS, POLLIN, POLLOUT
@@ -157,6 +158,7 @@ class Socket(zmq.Socket):
     started = None
     stopped = None
     _start_lock = None
+    _exited = None
 
     def __init__(
         self,
@@ -182,6 +184,7 @@ class Socket(zmq.Socket):
         self._state = 0
         self._fd = self._shadow_sock.FD
         self.started = Event()
+        self._exited = Event()
         self.stopped = Event()
         self._start_lock = Lock()
 
@@ -831,10 +834,8 @@ class Socket(zmq.Socket):
         return self
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
-        self.close()
-        res = await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
-        await self.stopped.wait()
-        return res
+        await self.stop()
+        return await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
 
     async def start(
         self,
@@ -853,21 +854,45 @@ class Socket(zmq.Socket):
 
     async def _start(self, *, task_status: TaskStatus[None]):
         assert self.started is not None
+        assert self.stopped is not None
+        assert self._exited is not None
+        assert self._task_group is not None
         task_status.started()
         self.started.set()
         try:
             while True:
-                await wait_readable(self._shadow_sock.FD)
+                wait_stopped_task = create_task(self.stopped.wait(), self._task_group)
+                tasks = [
+                    create_task(wait_readable(self._shadow_sock.FD), self._task_group),  # type: ignore[arg-type]
+                    wait_stopped_task,
+                ]
+                done, pending = await wait(
+                    tasks, self._task_group, return_when=FIRST_COMPLETED
+                )
+                for task in pending:
+                    task.cancel()
+                for task in done:
+                    await task.wait()
+                if wait_stopped_task in done:
+                    break
                 await self._handle_events()
         except BaseException:
             pass
+        finally:
+            self._exited.set()
 
         assert self.stopped is not None
         self.stopped.set()
 
     async def stop(self):
+        assert self._exited is not None
+        assert self.stopped is not None
+        self.stopped.set()
+        try:
+            await self._exited.wait()
+        except get_cancelled_exc_class():
+            pass
         self.close()
-        await self.stopped.wait()
 
     def close(self, linger: int | None = None) -> None:
         try:
@@ -876,12 +901,8 @@ class Socket(zmq.Socket):
         except BaseException:
             pass
 
-        try:
-            if self._task_group is not None:
-                self._task_group.cancel_scope.cancel()
-                self._task_group = None
-        except BaseException:
-            pass
+        if self._task_group is not None:
+            self._task_group = None
 
     close.__doc__ = zmq.Socket.close.__doc__
 
