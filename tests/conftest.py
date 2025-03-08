@@ -1,6 +1,5 @@
 import os
 import signal
-import socket
 from threading import Thread
 
 import zmq
@@ -76,7 +75,8 @@ def sockets(contexts):
 
     # close sockets
     for socket in sockets:
-        socket.close(linger=0)
+        if not socket.closed:
+            socket.close(linger=0)
 
 
 @pytest.fixture
