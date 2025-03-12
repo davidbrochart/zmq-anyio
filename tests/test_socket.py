@@ -2,7 +2,7 @@ import json
 
 import pytest
 import zmq
-from anyio import create_task_group, move_on_after, sleep, to_thread
+from anyio import create_task_group, fail_after, move_on_after, sleep, to_thread
 from anyioutils import CancelledError, Future, create_task
 from zmq_anyio import Poller, Socket
 
@@ -332,3 +332,13 @@ async def test_poll_on_closed_socket(push_pull):
             await sleep(0.1)
 
     assert f.done()
+
+
+async def test_close(create_bound_pair):
+    a, b = map(Socket, create_bound_pair(zmq.PUSH, zmq.PULL))
+    with fail_after(1):
+        async with create_task_group() as tg:
+            await tg.start(a.start)
+            await tg.start(b.start)
+            a.close()
+            b.close()

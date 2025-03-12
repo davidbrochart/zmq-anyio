@@ -925,6 +925,8 @@ class Socket(zmq.Socket):
         except BaseException:
             pass
 
+        assert self.stopped is not None
+        self.stopped.set()
         if self._task_group is not None:
             self._task_group = None
 
