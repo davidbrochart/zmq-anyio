@@ -1,5 +1,9 @@
 # Version history
 
+## 0.3.8
+
+- Make sure that `self._start` and `self.stop` calls are contained within `TaskGroup` async context manager (PR by @graingert).
+
 ## 0.3.7
 
 - Add `test_close`.
