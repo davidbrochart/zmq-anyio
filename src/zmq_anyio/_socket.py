@@ -848,7 +848,10 @@ class Socket(zmq.Socket):
 
     async def __aexit__(self, exc_type, exc_value, exc_tb):
         if self.__stack is not None:
-            return await self.__stack.__aexit__(exc_type, exc_value, exc_tb)
+            try:
+                return await self.__stack.__aexit__(exc_type, exc_value, exc_tb)
+            finally:
+                self.__stack = None
         await self.stop()
 
     async def start(
