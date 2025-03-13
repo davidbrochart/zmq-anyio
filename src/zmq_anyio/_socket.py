@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 import pickle
 import selectors
 from collections import deque
@@ -191,6 +192,7 @@ class Socket(zmq.Socket):
         self._exited = Event()
         self.stopped = Event()
         self._task_group = task_group
+        self.__stack: AsyncExitStack | None = None
 
     def get(self, key):
         result = super().get(key)
@@ -831,17 +833,21 @@ class Socket(zmq.Socket):
             return
 
         self._starting = True
-        if self._task_group is None:
-            self.__task_group = create_task_group()
-            self._task_group = await self.__task_group.__aenter__()
-            await self._task_group.start(self._start)
+        if self._task_group is not None:
+            return self
+
+        async with AsyncExitStack() as stack:
+            self._task_group = task_group = await stack.enter_async_context(create_task_group())
+            await task_group.start(self._start)
+            stack.push_async_callback(self.stop)
+            self.__stack = stack.pop_all()
 
         return self
 
-    async def __aexit__(self, exc_type, exc_value, exc_tb):
+    async def __aexit__(self, exc_type, exc_value, exc_tb):        
+        if self.__stack is not None:
+            return await self.__stack.__aexit__(exc_type, exc_value, exc_tb)
         await self.stop()
-        if self.__task_group is not None:
-            return await self.__task_group.__aexit__(exc_type, exc_value, exc_tb)
 
     async def start(
         self,
