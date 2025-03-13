@@ -157,7 +157,7 @@ class Socket(zmq.Socket):
     _fd = None
     _exit_stack = None
     _task_group = None
-    __task_group = None
+    __stack = None
     _thread = None
     started = None
     stopped = None
