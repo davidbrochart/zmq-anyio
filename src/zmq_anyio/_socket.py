@@ -157,7 +157,7 @@ class Socket(zmq.Socket):
     _fd = None
     _exit_stack = None
     _task_group = None
-    __stack = None
+    __stack: AsyncExitStack | None = None
     _thread = None
     started = None
     stopped = None
@@ -192,7 +192,7 @@ class Socket(zmq.Socket):
         self._exited = Event()
         self.stopped = Event()
         self._task_group = task_group
-        self.__stack: AsyncExitStack | None = None
+        self.__stack = None
 
     def get(self, key):
         result = super().get(key)
