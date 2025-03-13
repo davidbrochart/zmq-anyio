@@ -837,14 +837,16 @@ class Socket(zmq.Socket):
             return self
 
         async with AsyncExitStack() as stack:
-            self._task_group = task_group = await stack.enter_async_context(create_task_group())
+            self._task_group = task_group = await stack.enter_async_context(
+                create_task_group()
+            )
             await task_group.start(self._start)
             stack.push_async_callback(self.stop)
             self.__stack = stack.pop_all()
 
         return self
 
-    async def __aexit__(self, exc_type, exc_value, exc_tb):        
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
         if self.__stack is not None:
             return await self.__stack.__aexit__(exc_type, exc_value, exc_tb)
         await self.stop()
