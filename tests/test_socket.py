@@ -1,8 +1,9 @@
 import json
+import socket
 
 import pytest
 import zmq
-from anyio import create_task_group, fail_after, move_on_after, sleep, to_thread
+from anyio import create_task_group, fail_after, move_on_after, sleep, to_thread, wait_all_tasks_blocked, wait_readable
 from anyioutils import CancelledError, Future, create_task
 from zmq_anyio import Poller, Socket
 
@@ -342,3 +343,24 @@ async def test_close(create_bound_pair):
             await tg.start(b.start)
             a.close()
             b.close()
+            await sleep(0.1)
+
+
+async def test_wait_readable():
+    with fail_after(1):
+        s1, s2 = socket.socketpair()
+        with s1, s2:
+            s1.setblocking(False)
+            s2.setblocking(False)
+            async with create_task_group() as tg:
+                tg.start_soon(wait_readable, s2)
+                await wait_all_tasks_blocked()
+                await sleep(0.1)
+                tg.cancel_scope.cancel()
+
+        s1, s2 = socket.socketpair()
+        with s1, s2:
+            s1.setblocking(False)
+            s2.setblocking(False)
+            s1.send(b"\x00")
+            await wait_readable(s2)
