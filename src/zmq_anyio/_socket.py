@@ -897,7 +897,7 @@ class Socket(zmq.Socket):
                 )
                 tasks = [
                     create_task(
-                        wait_readable(self._shadow_sock.FD),  # type: ignore[arg-type]
+                        wait_readable(self._shadow_sock),  # type: ignore[arg-type]
                         self._task_group,
                         exception_handler=ignore_exceptions,
                     ),
