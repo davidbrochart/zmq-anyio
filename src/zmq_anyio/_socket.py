@@ -194,6 +194,12 @@ class Socket(zmq.Socket):
         self._task_group = task_group
         self.__stack = None
 
+    def fileno(self) -> int:
+        try:
+            return super().fileno()
+        except zmq.error.ZMQError:
+            return -1
+
     def get(self, key):
         result = super().get(key)
         if key == EVENTS:
