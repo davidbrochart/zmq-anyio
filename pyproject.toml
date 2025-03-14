@@ -35,6 +35,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest >=8,<9",
+    "pytest-timeout",
     "trio >=0.27.0,<0.28",
     "mypy",
     "ruff",
@@ -54,3 +55,6 @@ source = ["zmq_anyio", "tests"]
 
 [tool.coverage.report]
 show_missing = true
+
+[tool.pytest.ini_options]
+timeout = 10
