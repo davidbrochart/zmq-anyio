@@ -901,19 +901,19 @@ class Socket(zmq.Socket):
                     self._task_group,
                     exception_handler=ignore_exceptions,
                 )
-                wait_readable_task = create_task(
-                    wait_readable(self),  # type: ignore[arg-type]
-                    self._task_group,
-                    exception_handler=ignore_exceptions,
-                )
                 tasks = [
-                    wait_readable_task,
+                    create_task(
+                        wait_readable(self),  # type: ignore[arg-type]
+                        self._task_group,
+                        exception_handler=ignore_exceptions,
+                    ),
                     wait_stopped_task,
                 ]
                 done, pending = await wait(
                     tasks, self._task_group, return_when=FIRST_COMPLETED
                 )
-                wait_stopped_task.cancel()
+                for task in pending:
+                    task.cancel()
                 if wait_stopped_task in done:
                     break
                 await self._handle_events()
