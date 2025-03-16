@@ -10,6 +10,22 @@ from zmq_anyio import Poller, Socket
 pytestmark = pytest.mark.anyio
 
 
+async def test_close1(create_bound_pair):
+    a, b = map(Socket, create_bound_pair(zmq.PUSH, zmq.PULL))
+    with fail_after(1):
+        async with create_task_group() as tg:
+            await tg.start(a.start)
+            await tg.start(b.start)
+            await sleep(0.4)
+            print(f"{a.fileno()=}")
+            print(f"{b.fileno()=}")
+            a.close()
+            b.close()
+            print(f"{a.fileno()=}")
+            print(f"{b.fileno()=}")
+            await sleep(0.4)
+
+
 async def test_context(context):
     a, b = Socket(context, zmq.PAIR), Socket(context, zmq.PAIR)
     port = a.bind_to_random_port("tcp://127.0.0.1")
@@ -335,19 +351,20 @@ async def test_poll_on_closed_socket(push_pull):
     assert f.done()
 
 
-async def test_close(create_bound_pair):
+async def test_close2(create_bound_pair):
     a, b = map(Socket, create_bound_pair(zmq.PUSH, zmq.PULL))
     with fail_after(1):
         async with create_task_group() as tg:
             await tg.start(a.start)
             await tg.start(b.start)
+            await sleep(0.4)
             print(f"{a.fileno()=}")
             print(f"{b.fileno()=}")
             a.close()
             b.close()
             print(f"{a.fileno()=}")
             print(f"{b.fileno()=}")
-            await sleep(0.1)
+            await sleep(0.4)
 
 
 async def test_wait_readable():

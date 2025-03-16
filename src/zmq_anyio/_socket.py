@@ -27,6 +27,8 @@ import zmq
 from zmq import EVENTS, POLLIN, POLLOUT
 from zmq.utils import jsonapi
 
+from ._selector_thread import _set_selector_windows
+
 try:
     DEFAULT_PROTOCOL = pickle.DEFAULT_PROTOCOL
 except AttributeError:
@@ -887,6 +889,7 @@ class Socket(zmq.Socket):
         if self.started.is_set():
             return
 
+        _set_selector_windows()
         assert self.started is not None
         assert self.stopped is not None
         assert self._exited is not None
