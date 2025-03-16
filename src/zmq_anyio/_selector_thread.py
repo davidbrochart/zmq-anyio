@@ -216,10 +216,10 @@ class SelectorThread:
                     rs, _, _ = select.select([self._waker_r.fileno()], [], [], 0)
                     if rs:
                         ws = []
-                    else:
-                        raise
-                else:
-                    raise
+                    # else:
+                    #     raise
+                # else:
+                #     raise
 
             try:
                 self._real_loop.call_soon_threadsafe(self._handle_select, rs, ws)
