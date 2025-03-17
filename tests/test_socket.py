@@ -3,7 +3,7 @@ import socket
 
 import pytest
 import zmq
-from anyio import create_task_group, fail_after, move_on_after, sleep, to_thread, wait_all_tasks_blocked, wait_readable
+from anyio import create_task_group, fail_after, move_on_after, notify_closing, sleep, to_thread, wait_all_tasks_blocked, wait_readable
 from anyioutils import CancelledError, Future, create_task
 from zmq_anyio import Poller, Socket
 
@@ -19,6 +19,8 @@ async def test_close1(create_bound_pair):
             await sleep(0.4)
             print(f"{a.fileno()=}")
             print(f"{b.fileno()=}")
+            notify_closing(a)
+            notify_closing(b)
             a.close()
             b.close()
             print(f"{a.fileno()=}")
@@ -360,6 +362,8 @@ async def test_close2(create_bound_pair):
             await sleep(0.4)
             print(f"{a.fileno()=}")
             print(f"{b.fileno()=}")
+            notify_closing(a)
+            notify_closing(b)
             a.close()
             b.close()
             print(f"{a.fileno()=}")
