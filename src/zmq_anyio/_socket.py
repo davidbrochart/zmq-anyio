@@ -860,6 +860,7 @@ class Socket(zmq.Socket):
         task_status: TaskStatus[None] = TASK_STATUS_IGNORED,
     ) -> None:
         if self._starting:
+            task_status.started()
             return
 
         self._starting = True
@@ -879,6 +880,7 @@ class Socket(zmq.Socket):
     async def _start(self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         assert self.started is not None
         if self.started.is_set():
+            task_status.started()
             return
 
         assert self.started is not None
@@ -922,6 +924,7 @@ class Socket(zmq.Socket):
     async def stop(self):
         assert self._exited is not None
         assert self.stopped is not None
+
         self.stopped.set()
         try:
             await self._exited.wait()
