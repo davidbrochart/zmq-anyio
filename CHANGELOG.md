@@ -1,5 +1,9 @@
 # Version history
 
+## 0.3.9
+
+- Allow multiple `start`/`stop` calls.
+
 ## 0.3.8
 
 - Make sure that `self._start` and `self.stop` calls are contained within `TaskGroup` async context manager (PR by @graingert).
