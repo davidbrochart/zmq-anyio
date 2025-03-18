@@ -898,12 +898,18 @@ class Socket(zmq.Socket):
             await self.stopped.wait()
             tg.cancel_scope.cancel()
 
+        def fileno() -> int:
+            try:
+                return self._shadow_sock.fileno()
+            except zmq.ZMQError:
+                return -1
+
         try:
-            while not self.closed:
+            while (fd := fileno()) > 0:
                 async with create_task_group() as tg:
                     tg.start_soon(wait_or_cancel)
                     try:
-                        await wait_readable(self._shadow_sock)
+                        await wait_readable(fd)
                     except ClosedResourceError:
                         break
                     tg.cancel_scope.cancel()
