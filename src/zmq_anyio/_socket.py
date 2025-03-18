@@ -899,6 +899,8 @@ class Socket(zmq.Socket):
             tg.cancel_scope.cancel()
 
         def fileno() -> int:
+            if self.closed:
+                return -1
             try:
                 return self._shadow_sock.fileno()
             except zmq.ZMQError:
