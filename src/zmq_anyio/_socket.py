@@ -20,6 +20,7 @@ from anyio import (
     sleep,
     wait_readable,
     ClosedResourceError,
+    notify_closing,
 )
 from anyio.abc import TaskGroup, TaskStatus
 from anyioutils import Future, create_task
@@ -924,11 +925,13 @@ class Socket(zmq.Socket):
         self.close()
 
     def close(self, linger: int | None = None) -> None:
-        try:
-            if not self.closed and self._fd is not None:
+        fd = self._fd
+        if not self.closed and fd is not None:
+            notify_closing(fd)
+            try:
                 super().close(linger=linger)
-        except BaseException:
-            pass
+            except BaseException:
+                pass
 
         assert self.stopped is not None
         self.stopped.set()
