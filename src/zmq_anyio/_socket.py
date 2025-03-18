@@ -902,13 +902,14 @@ class Socket(zmq.Socket):
             while not self.closed:
                 async with create_task_group() as tg:
                     tg.start_soon(wait_or_cancel)
-                    await wait_readable(self._shadow_sock)
+                    try:
+                        await wait_readable(self._shadow_sock)
+                    except ClosedResourceError:
+                        break
                     tg.cancel_scope.cancel()
                 if self.stopped.is_set():
                     break
                 await self._handle_events()
-        except ClosedResourceError:
-            self._task_group.cancel_scope.cancel()
         finally:
             self._exited.set()
             self.stopped.set()
