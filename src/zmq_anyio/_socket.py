@@ -19,9 +19,10 @@ from anyio import (
     get_cancelled_exc_class,
     sleep,
     wait_readable,
+    ClosedResourceError,
 )
 from anyio.abc import TaskGroup, TaskStatus
-from anyioutils import FIRST_COMPLETED, Future, create_task, wait
+from anyioutils import FIRST_COMPLETED, Future, create_task
 
 import zmq
 from zmq import EVENTS, POLLIN, POLLOUT
@@ -890,31 +891,24 @@ class Socket(zmq.Socket):
         task_status.started()
         self.started.set()
         self._thread = get_ident()
+
+        async def wait_or_cancel() -> None:
+            assert self.stopped is not None
+            await self.stopped.wait()
+            tg.cancel_scope.cancel()
+
         try:
             while True:
-                wait_stopped_task = create_task(
-                    self.stopped.wait(),
-                    self._task_group,
-                    exception_handler=ignore_exceptions,
-                )
-                tasks = [
-                    create_task(
-                        wait_readable(self._shadow_sock),  # type: ignore[arg-type]
-                        self._task_group,
-                        exception_handler=ignore_exceptions,
-                    ),
-                    wait_stopped_task,
-                ]
-                done, pending = await wait(
-                    tasks, self._task_group, return_when=FIRST_COMPLETED
-                )
-                for task in pending:
-                    task.cancel()
-                if wait_stopped_task in done:
+                async with create_task_group() as tg:
+                    tg.start_soon(wait_or_cancel)
+                    await wait_readable(self._shadow_sock)
+                if self.stopped.is_set():
                     break
                 await self._handle_events()
-        except BaseException:
-            pass
+        except get_cancelled_exc_class():
+            raise
+        except ClosedResourceError:
+            self._task_group.cancel_scope.cancel()
         finally:
             self._exited.set()
 
