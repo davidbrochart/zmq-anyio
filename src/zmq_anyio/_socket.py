@@ -22,7 +22,7 @@ from anyio import (
     ClosedResourceError,
 )
 from anyio.abc import TaskGroup, TaskStatus
-from anyioutils import FIRST_COMPLETED, Future, create_task
+from anyioutils import Future, create_task
 
 import zmq
 from zmq import EVENTS, POLLIN, POLLOUT
@@ -898,22 +898,19 @@ class Socket(zmq.Socket):
             tg.cancel_scope.cancel()
 
         try:
-            while True:
+            while not self.closed:
                 async with create_task_group() as tg:
                     tg.start_soon(wait_or_cancel)
                     await wait_readable(self._shadow_sock)
+                    tg.cancel_scope.cancel()
                 if self.stopped.is_set():
                     break
                 await self._handle_events()
-        except get_cancelled_exc_class():
-            raise
         except ClosedResourceError:
             self._task_group.cancel_scope.cancel()
         finally:
             self._exited.set()
-
-        assert self.stopped is not None
-        self.stopped.set()
+            self.stopped.set()
 
     async def stop(self):
         assert self._exited is not None
